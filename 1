@@ -9,3 +9,9 @@ http://onlineservice-green.cn-east-4.roma.huawei.com:8088/v2/infer/e804e4a8-aaa4
 aCcENwfRYGfJ-VrGcBhkcvznD5UqQb7sJ4-DRfKLgRKpn7IWd-O6GU8efeP4N1caeYHH6I_ZBV_0RjSE9lattA
 
 Error in get_response: Error code: 413 - {'error': {'message': 'Request URI/Entity Too Large', 'type': 'bad_response_status_code', 'param': '', 'code': 'bad_response_status_code'}}, retry 1/10, waiting 10.0 seconds...
+
+# 1. 通用搜索 - /search
+curl -X POST "https://yibuapi.com/serper/search" \
+  -H "Authorization: Bearer sk-xxxxxx" \
+  -H "Content-Type: application/json" \
+  -d '{"q":"yibuapi","gl":"cn","hl":"zh-cn","tbs":"qdr:d","page":1}'
