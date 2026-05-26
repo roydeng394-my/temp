@@ -2,19 +2,19 @@
 
 ## Summary Statistics
 
-**Total Failed Tasks**: 88 (1 preprocess + 11 exceed_max_turns + 3 fail_at_asking_question + 18 fail_at_invalid_tool_call_str + 55 did_not_pass_evaluation)
-
-Note: The user-provided summary header listed 95/62, but only 55 evaluation-failed task paths were enumerated. This report analyzes the 55 tasks that were actually listed.
+**Total Failed Tasks**: 95 (1 preprocess + 11 exceed_max_turns + 3 fail_at_asking_question + 18 fail_at_invalid_tool_call_str + 62 did_not_pass_evaluation)
 
 **Main Cause of The Failure Distribution**
 
 | Failed Stage | Main Cause of The Failure | Count | % of Failed | Affected Tasks |
 |---|---|---|---|---|
-| preprocess | Network/registry timeout during preprocess (Helm chart fetch) | 1 | 1.1% | k8s-redis-helm-upgrade |
-| running | Exceeded max turns (50) - agent stuck in retries / loops or massive multi-step tasks | 11 | 12.5% | nhl-b2b-analysis, sync-todo-to-readme, ab-testing, academic-warning, cvpr-research, filter-low-selling-products, ipad-edu-price, k8s-safety-audit, privacy-desensitization, travel-expense-reimbursement, yahoo-analysis |
-| running | fail_at_asking_question (agent asked the user a question, ending the run) | 3 | 3.4% | k8s-deployment-cleanup, sales-accounting, academic-pdf-report |
-| running | fail_at_invalid_tool_call_str (model emitted malformed tool-call payload) | 18 | 20.5% | notion-hr, quantitative-financial-analysis, experiments-recordings, oil-price, wandb-best-score, notion-movies, notion-find-job, university-course-selection, k8s-pr-preview-testing, k8s-mysql, latex-prompt-box, vlm-history-completer, task-tracker, add-bibtex, nvidia-market, profile-update-online, notion-personal-website, paper-checker |
-| evaluation | did_not_pass_evaluation (agent finished but output incorrect / incomplete / wrong format / wrong target) | 55 | 62.5% | (see Section 5 table) |
+| preprocess | External API unreachable (Docker Hub timeout) | 1 | 1.1% | k8s-redis-helm-upgrade |
+| running | Agent stuck in repetitive loops | 6 | 6.3% | nhl-b2b-analysis, ab-testing, academic-warning, filter-low-selling-products, k8s-safety-audit, yahoo-analysis |
+| running | Agent spending too many turns on a sub-task | 3 | 3.2% | sync-todo-to-readme, ipad-edu-price, travel-expense-reimbursement |
+| running | Agent unable to find correct approach, keeps trying different strategies | 2 | 2.1% | cvpr-research, privacy-desensitization |
+| running | Agent asked clarifying question (not permitted) | 3 | 3.2% | k8s-deployment-cleanup, sales-accounting, academic-pdf-report |
+| running | Malformed tool call JSON (missing/extra brackets or braces) | 18 | 18.9% | notion-hr, quantitative-financial-analysis, experiments-recordings, oil-price, wandb-best-score, notion-movies, notion-find-job, university-course-selection, k8s-pr-preview-testing, k8s-mysql, latex-prompt-box, vlm-history-completer, task-tracker, add-bibtex, nvidia-market, profile-update-online, notion-personal-website, paper-checker |
+| evaluation | Agent output did not satisfy evaluation criteria | 62 | 65.3% | (see detailed table below) |
 
 ## Detailed Analysis
 
@@ -22,7 +22,7 @@ Note: The user-provided summary header listed 95/62, but only 55 evaluation-fail
 
 | Task | Category | Explanation |
 |---|---|---|
-| k8s-redis-helm-upgrade | Network / external registry timeout | Preprocess command `uv run -m tasks.finalpool.k8s-redis-helm-upgrade.preprocess.main` failed with `Error: failed to do request: Head "https://registry-1.docker.io/v2/bitnamicharts/redis/manifests/22.0.0": dial tcp 108.160.166.42:443: i/o timeout` followed by `INSTALLATION FAILED: client rate limiter Wait returned an error: context deadline exceeded`. Workspace initialization aborted with returncode 1, so the task never ran. Root cause is environmental (Docker Hub / OCI registry unreachable from the bench host), not a model failure. |
+| k8s-redis-helm-upgrade | External API unreachable (SSL errors, timeouts) | During preprocess, the init script tried to pull Bitnami Redis Helm chart images from Docker Hub (registry-1.docker.io). The connection timed out with `dial tcp 108.160.166.42:443: i/o timeout`. Helm installation then failed with `client rate limiter Wait returned an error: context deadline exceeded`. The Kind cluster was created successfully, but the Helm chart deployment for Redis (versions 19.0.0 and 22.0.0) could not proceed because Docker Hub was unreachable from the evaluation environment. |
 
 ### 2. running_stage / program_fail_at_somepoint
 (none)
@@ -31,52 +31,52 @@ Note: The user-provided summary header listed 95/62, but only 55 evaluation-fail
 
 | Task | Category | Explanation | Top 3 Most Frequent Tool Calls |
 |---|---|---|---|
-| nhl-b2b-analysis | Single-strategy retry loop on missing credentials | Total 100 tool calls. Agent kept calling `local-python-execute` to look for/use a service-account key for Google Sheets that was never available, repeatedly trying alternate paths. Last message: "I'll use the Google Sheets API with a service account key. Let me check if there's a key file available...". Never produced output. | local-python-execute (76), terminal-run_command (19), google_sheet-list_spreadsheets (1) |
-| sync-todo-to-readme | Excessive file fetching across a large repo | 211 tool calls. Agent kept re-reading the same GitHub files (README.md and source files in `roydeng394-my/LUFFY` were each fetched 7-8 times) trying to find TODOs to sync, never producing the final README update. | github-get_file_contents (195), github-search_code (6), github-list_branches (4) |
-| ab-testing | Repeated identical BigQuery queries | 100 tool calls. Same INFORMATION_SCHEMA query repeated 8 times, same per-scenario SUM queries 6 times each. The model loop on `google-cloud-bigquery_run_query`, never wrote the final `record.csv`. | google-cloud-bigquery_run_query (90), local-python-execute (8), google-cloud-bigquery_list_datasets (1) |
-| academic-warning | Wrong-tool repetition | 104 tool calls. Agent invoked `google-cloud-storage_create_bucket` 88 times trying to (re)create a "log bucket" with different names (each call distinct), instead of completing the actual task. Confused storage-bucket creation with the warning generation pipeline. | google-cloud-storage_create_bucket (88), google-cloud-bigquery_run_query (8), google-cloud-storage_list_buckets (2) |
-| cvpr-research | Web research never converged | 108 tool calls. Spent the budget on web search and HTML fetching for CVPR 2025 author statistics; re-read `personal_info.md` 8 times and re-fetched the same paperdigest URL 6 times. Did not finalize an answer. | local-web_search (52), fetch-fetch_html (20), fetch-fetch_markdown (13) |
-| filter-low-selling-products | Stuck verifying regex / re-listing products | 145 tool calls. Re-read template files repeatedly (email_template.txt x9, subscriber.json x8) and re-listed WooCommerce products 10 times; last message "Let me check the regex matching more carefully." Loop on validation rather than committing the result. | filesystem-read_file (73), local-python-execute (34), woocommerce-woo_products_list (26) |
-| ipad-edu-price | Slow web-research with overlong-output management | 107 tool calls. Most calls were `local-view_overlong_tooloutput` and `local-search_history`/`fetch-fetch_html` cycling through Apple regional pages. Found HK pricing but never finished SG/CN/Pencil; ran out of turns mid-research. | local-view_overlong_tooloutput (38), fetch-fetch_html (28), local-web_search (17) |
-| k8s-safety-audit | Repeated sheet edits | 123 tool calls. `google_sheet-update_cells` with the same header row called 32 times, `google_sheet-get_sheet_data` for `Week1` sheet called 31 times - the agent kept re-reading and re-writing the same sheet/range trying different spreadsheet IDs after permission errors. | google_sheet-update_cells (35), google_sheet-get_sheet_data (34), k8s-kubectl_get (22) |
-| privacy-desensitization | Verification loop on output files | 119 tool calls. Repeatedly re-reading the desensitized output files (customer_database_desensitized.json x12, contact_info_desensitized.txt x7, etc.) and re-running python checks for phone numbers; never finished all files within the budget. | local-python-execute (70), filesystem-read_file (45), filesystem-list_directory (2) |
-| travel-expense-reimbursement | PDF parsing scope explosion | 100 tool calls. Heavy `pdf-tools-read_pdf_pages` (71) walking many PDFs page-by-page. Last assistant message was still "Now I have all the data I need. Let me create a comprehensive solution..." - exhausted turns before submitting any updates. | pdf-tools-read_pdf_pages (71), local-python-execute (21), filesystem-list_directory (2) |
-| yahoo-analysis | Tight repetition loop (severe) | 138 tool calls but only 10 distinct (name,args) tuples. The agent re-read `guide.md` 20 times, `results_template.md` 20 times, and called `yahoo-finance-get_recommendations` for NVDA with identical parameters 20 times. Classic stuck-loop pattern. | filesystem-read_file (60+, with 20+20 on guide/template), yahoo-finance-get_recommendations (40), yahoo-finance-get_historical_stock_prices (55) |
+| nhl-b2b-analysis | Agent stuck in repetitive loops | After failing to use the google_sheet tool properly, the agent pivoted to local Python to authenticate directly with the Sheets API. From turn ~50 onward, the exact same `python-execute` call ("Check for service account key in common locations") ran every single turn with the same zero-output result, repeating identically until max turns at T100. | local-python-execute (76), terminal-run_command (19), google_sheet-get_sheet_data (1) |
+| sync-todo-to-readme | Agent spending too many turns on a sub-task | The task required extracting TODO items from .py files in a GitHub repo and updating the README. The agent correctly identified the approach but spent all 91 turns exhaustively reading individual Python source files one by one via `github-get_file_contents` (195 calls total), never completing the actual README update. | github-get_file_contents (195), github-search_code (6), github-list_branches (4) |
+| ab-testing | Agent stuck in repetitive loops | The agent needed to query BigQuery A/B test tables. It guessed table names (ab_Grocery, ab_Jewelry, ab_PetSupplies, etc.) which all returned 404 errors. Rather than discovering actual table names first, it cycled through a long list of guessed category names turn by turn. At turns 98–100 it pivoted to Python bigquery client calls which also errored. | google-cloud-bigquery_run_query (90), local-python-execute (8), google-cloud-bigquery_list_datasets (1) |
+| academic-warning | Agent stuck in repetitive loops | The task required writing warning logs to an existing GCS bucket prefixed with 'exam_log'. The agent found `list_buckets` returned empty results and assumed it needed to CREATE the bucket. From turn 6 onward it generated over 90 unique bucket name variations (exam_log_critical_warnings, exam_log_connections, etc.) each receiving "Access denied: not in allowed buckets list", never locating the pre-existing bucket. | google-cloud-storage_create_bucket (88), google-cloud-bigquery_run_query (8), google-cloud-storage_list_buckets (2) |
+| cvpr-research | Agent unable to find correct approach, keeps trying different strategies | The task required identifying the top 3 CVPR 2025 researchers by paper count in visual generative models. The agent tried web searches, fetching paperdigest.org, fetching the CVPR accepted papers page, and multiple search query reformulations across all 92 turns. No source provided ranked author statistics directly, so the agent kept pivoting search strategies without converging on an answer. | local-web_search (52), fetch-fetch_html (20), fetch-fetch_markdown (13) |
+| filter-low-selling-products | Agent stuck in repetitive loops | After fetching WooCommerce products, the agent spent turns 60–85 repeatedly trying to parse the nested JSON structure (the output was wrapped in a `{type, text, annotations}` envelope). Each `local-python-execute` attempt failed or produced 0 products, and the agent iterated through slight regex/parsing variations every turn without resolving the core parsing issue. | filesystem-read_file (73), local-python-execute (34), woocommerce-woo_products_list (26) |
+| ipad-edu-price | Agent spending too many turns on a sub-task | The task required comparing iPad Pro education store prices across US, HK, SG, and CN. The agent fetched the pages early but outputs were oversized. It then spent the majority of turns paging through large overlong outputs and searching history to extract individual prices for each region and product, reading one overlong chunk per turn, still gathering prices at max turns without completing the comparison. | local-view_overlong_tooloutput (38), fetch-fetch_html (28), local-web_search (17) |
+| k8s-safety-audit | Agent stuck in repetitive loops | The task required writing k8s audit results to a Google Sheet. The agent created a spreadsheet but then alternated `get_sheet_data` and `update_cells` every turn from T81 onward, both consistently returning 404 errors for the same spreadsheet ID. Despite identical errors, it kept calling the exact same two tools with identical parameters every two turns until max turns. | google_sheet-update_cells (35), google_sheet-get_sheet_data (34), k8s-kubectl_get (22) |
+| privacy-desensitization | Agent unable to find correct approach, keeps trying different strategies | The task required desensitizing PII in documents. The agent processed most files successfully but got stuck on online_orders.json: the phone number regex was incorrectly matching order ID digits. From turn 88 onward it alternated `local-python-execute` (to fix the regex) and `filesystem-read_file` (to verify the result), each cycle producing a slightly different regex that still failed, repeating until max turns. | local-python-execute (70), filesystem-read_file (45), filesystem-list_directory (2) |
+| travel-expense-reimbursement | Agent spending too many turns on a sub-task | The task required processing PDF expense claim invoices and entering them into a Snowflake database. The agent spent the majority of its turns reading individual PDF invoices one at a time (one per turn) via `pdf-tools-read_pdf_pages`. From turn 86 to 100 it read EXP2024003 invoices 01–09 sequentially, saying "Now I have all the data I need" at each step but always reading one more invoice before acting — never completing the database write. | pdf-tools-read_pdf_pages (71), local-python-execute (21), filesystem-list_directory (2) |
+| yahoo-analysis | Agent stuck in repetitive loops | The task required analyzing analyst rating accuracy for NVDA and AAPL. The agent got the data early (turn 3) but then entered a loop: every 2 turns it re-read guide.md and results_template.md, then re-fetched the same recommendations and historical price data for both tickers from Yahoo Finance. This fetch-then-restart cycle repeated from turn 3 to turn 81 with no output file ever written. | yahoo-finance-get_historical_stock_prices (55), filesystem-read_file (40), yahoo-finance-get_recommendations (40) |
 
 ### 4. running_stage / fail_at_asking_question
 
-The model violated the system prompt's "Do not seek confirmation or additional feedback from the user" rule by ending its turn with a question. The harness treats this as a failure.
+The model violated the benchmark rule "Do not seek confirmation or additional feedback from the user" by ending its turn with a clarifying question. The harness treats this as a failure.
 
-| Task |
-|---|
-| k8s-deployment-cleanup |
-| sales-accounting |
-| academic-pdf-report |
+| Task | Question Asked | Explanation |
+|---|---|---|
+| k8s-deployment-cleanup | "Could you please provide the email address of the team member responsible for cluster management?" | The agent correctly identified and stopped 5 outdated deployments across dev-* namespaces, but then asked the user for the cluster admin's email address. It should have independently found the email from workspace files or k8s config. |
+| sales-accounting | "Could you please provide the specific transaction records you'd like me to add from last week (January 8-14, 2024) and the week before last (January 1-7, 2024)?" | The task instructed the agent to use transaction records "told to you in your memory". The agent did not attempt to access any memory tool or workspace files and immediately asked the user to provide the records manually. |
+| academic-pdf-report | "Could you please provide the specific paper titles, conference name, or arXiv IDs of the papers you want me to research?" | The task said the papers were already in the workspace (an Excel sheet). Instead of reading the workspace files to find the list of papers, the agent asked the user to provide the papers manually. |
 
 ### 5. running_stage / fail_at_invalid_tool_call_str
 
-The model emitted a malformed tool_call (unparsable arguments / wrong format / not valid JSON), so the runner could not dispatch the call and the run was aborted. No deeper analysis required for this category - it indicates a model serialization bug rather than a reasoning failure.
+The model emitted a malformed tool call (unparsable JSON arguments), so the runner could not dispatch the call and the run was aborted. The dominant pattern is **missing closing brackets/braces** (14/18 tasks). Secondary patterns include: truncated string due to token limit (k8s-pr-preview-testing), extra `]` closing the outer array prematurely (university-course-selection, vlm-history-completer), a stray `"` after a number (nvidia-market), and an extra `}` mirroring LaTeX content structure (paper-checker).
 
-| Task |
-|---|
-| notion-hr |
-| quantitative-financial-analysis |
-| experiments-recordings |
-| oil-price |
-| wandb-best-score |
-| notion-movies |
-| notion-find-job |
-| university-course-selection |
-| k8s-pr-preview-testing |
-| k8s-mysql |
-| latex-prompt-box |
-| vlm-history-completer |
-| task-tracker |
-| add-bibtex |
-| nvidia-market |
-| profile-update-online |
-| notion-personal-website |
-| paper-checker |
+| Task | Tool Attempted | Explanation |
+|---|---|---|
+| notion-hr | notion-API-patch-page | JSON array missing one closing `}`. The arguments object for the patch-page call is not properly closed — ends with `...alice_jackson38@mcp.com"}}]}}}]` where one `}` is missing. |
+| quantitative-financial-analysis | notion-API-patch-block-children | JSON array missing one closing bracket. The children array inside the patch-block-children arguments is not closed — ends with `...directly"}}]}]}}]` where one `]` or `}` is missing. |
+| experiments-recordings | notion-API-patch-page | Parallel tool call array missing one closing bracket. Two simultaneous patch-page calls were being made, but the outer JSON array wrapping the parallel calls is not properly closed. |
+| oil-price | notion-API-patch-page | JSON array missing one closing `}`. The arguments object for the patch-page call is not properly closed — ends with `..."Neutral"}}}}]` where one `}` is absent before the final `]`. |
+| wandb-best-score | wandb-query_wandb_tool | Arguments object missing one closing `}`. The call ends with `..."specs": ["{...}"]}}]` where after closing the variables object there should be one more `}` to close the arguments object. |
+| notion-movies | notion-API-patch-page | Parallel tool call array missing the outer closing `]`. Two patch-page calls were made in parallel but the outer JSON array is not closed. |
+| notion-find-job | notion-API-post-database-query | Arguments object missing one closing `}`. The call ends with `..."Checking"}}}]` — the filter object needs 4 closing braces but only 3 are present. |
+| university-course-selection | excel-write_data_to_excel | Data array closed with an extra `]` producing `]]]` instead of `]]`. The outer tool call `]` was inserted before the filepath argument, causing a parse error. |
+| k8s-pr-preview-testing | filesystem-write_file | The string value for the 'content' argument (a full HTML/YAML ConfigMap file) was truncated mid-string — the JSON string was never terminated. The agent hit the output token limit while generating a large file content inline in the tool call. |
+| k8s-mysql | filesystem-edit_file | JSON array missing 2 closing brackets. The edits array and the arguments object are both left unclosed — ends with `..."debugging session."}}]` where two additional closing delimiters are needed. |
+| latex-prompt-box | filesystem-edit_file | JSON array missing 2 closing brackets. The edits array inside the arguments is not fully closed — ends with `...\\end{tcolorbox}"}}]` while two more closing delimiters are needed. |
+| vlm-history-completer | google_sheet-update_cells | Data array closed with an extra `]` producing `]]]` instead of `]]` before the 'range' argument — same structural pattern as university-course-selection. |
+| task-tracker | notion-API-update-a-page | JSON array missing one closing `}`. The arguments object for update-a-page is not properly closed — ends with `..."color": "red"}}}}]` where one `}` is missing. |
+| add-bibtex | filesystem-edit_file | JSON array missing one closing `]`. The edits array is not fully closed — the bibtex entry string ends with `...year={2020}\n}"]}}]` where one additional `]` is needed to close the edits array. |
+| nvidia-market | excel-write_data_to_excel | A stray double-quote character appears after the last number in the final data row: `-0.23"]]}}]` instead of `-0.23]]}}]`. This causes the JSON parser to treat the preceding row start quote as opening a string, making the last value appear as a string rather than a number. |
+| profile-update-online | filesystem-edit_file | JSON array missing 2 closing brackets. The edits array and the arguments object are left unclosed — the TSV file content string is terminated but the surrounding JSON structure is not properly closed. |
+| notion-personal-website | notion-API-patch-block-children | The children array of blocks passed to patch-block-children is missing one closing bracket. The deeply nested block objects (heading_1, paragraph elements) are not all properly closed. |
+| paper-checker | filesystem-edit_file | An extra `}` appears after the first edit object in the edits array. The first edit's newText value ends with `\\end{table}"` and is followed by `}}` instead of `},` — root cause: the oldText content contained a LaTeX `}}`, and the agent added an extra `}` when closing the edit object. |
 
 ### 6. evaluation_stage / program_fail_at_somepoint
 (none)
@@ -85,66 +85,73 @@ The model emitted a malformed tool_call (unparsable arguments / wrong format / n
 
 | Task | Failed Reason |
 |---|---|
-| canvas-homework-grader-python | Grading accuracy 5/6 (83.3%): Donald Richardson got 10.0 but his code had a runtime_error (list index out of range) and should be 0. Logic violation: the agent did not verify code execution before assigning full marks. |
-| hk-top-conf | Counts wildly off. Agent wrote HKUST=18 posters / 124 total etc., but ground truth is HKUST=113 posters / 124 total. Numbers in agent's table don't match the actual CVPR 2025 acceptance counts; only the row labels (cuhk/hkust/hku) sort correctly. |
-| investment-decision-analysis | Evaluator could find the spreadsheets but failed comparing the "Investment Return Comparison" worksheet (truncated log shows it stopped at "Checking worksheet"). Agent's worksheet content does not match groundtruth. |
-| live-transactions | Investigation report JSON was missing the required top-level key `related_transactions`. Validation: "1 missing or incorrect items - Missing key: related_transactions". |
-| music-analysis | Output xlsx contained sheets ['1940'..'1945'] only; groundtruth requires ['1940'..'1949']. Agent stopped at year 1945 - did not complete all 10 years. |
-| apply-phd-email | Wrong file naming inside `03_Recommendation_Letters`: agent saved `Recommendation_Letter_Lily-1.pdf` but groundtruth requires `Recommendation_Letter_Lily-2.pdf`. Also `02_Academic_Materials/Awards_Certificates/All_Awards_Certificates.pdf` content mismatch. |
-| arrange-workspace | "File structure does not match expected GT structure" - many files placed under wrong category folders (e.g. `Course_Schedule.jpg`, `course_schedule.xls` placed under `School/Courses_Materials` instead of expected location). |
-| canvas-arrange-exam | Match rate 54.5% (6/11). Agent left several courses with values "tbd" (DB101, NET101 missing dates/times/location); also confused proctor name normalization (`smithblacksmithmcpcom` vs `smith`); included CS101 and ENG101 which should have been excluded (entrance-exam score >= 95 exempts them). |
-| canvas-art-manager | 6 of ~27 instructor/course pairings failed with "Instructor X could not find course Y" (American Literature-7, Medieval History-7, Cognitive Psychology-7, Operations Management-7, Business Law-7, Screenwriting-7, International Marketing-7, Business Strategy-7). Agent created courses but did not properly assign them to all required instructors. |
-| canvas-do-quiz | 13/14 quizzes got full score; PHIL201-2 scored 160/180 (not full). Agent missed at least one question on the Advanced Logical Reasoning quiz. |
-| canvas-list-test | quiz_info.csv: agent has 3 rows, groundtruth has 13 (missed 10 quizzes). assignment_info.csv: agent has 14 rows, groundtruth has 4 (over-collected, included assignments that should be excluded). |
-| canvas-new-students-notification | Agent contacted all 14 new students correctly, but also incorrectly emailed 5 existing students (Stephanie Cox, Gary Collins, Stephanie Gonzalez, Raymond Cox, ...). Failed to filter to "new students only". |
-| canvas-submit-late-work | "Required email with attachment Leave Application.pdf not found" - the late-work submission process required emailing the leave application, which the agent skipped. |
-| cooking-guidance | Shopping coverage 75% (need >= 90%). 7 ingredients missing from shopping list (豆瓣酱, 生抽, 盐, 生抽酱油, 食用盐, 胡椒粉, 红油豆瓣). Agent didn't aggregate seasonings into the shopping list. |
-| course-assistant | Negative checks all passed but Michelle Brooks (michelle_brooks26@mcp.com) did not receive the required `nlp-course-emergency` email - one positive recipient missed. |
-| course-schedule | Output file `exam_schedule.jsonl` was never created (FileNotFoundError). Agent did not produce the expected artifact. |
-| courses-ta-hws | "Expected exactly 33 C files, but found 18". Agent only collected 18 of the 33 required C source files. |
-| dataset-license-issue | "Issue not closed". Agent investigated the dataset license but did not close the GitHub/tracker issue as required. |
-| detect-revised-terms | Row count mismatch: agent has 17 rows, groundtruth has 5. Over-detected revisions (false positives). |
-| dietary-health | Numeric mismatches: protein expected 78.0g but got 97.5g; another value 142.56g vs target 150.8g (>5% off). Calculations incorrect. |
-| email-paper-homepage | Venue field wrong: agent wrote "accepted at colm 2026 - conference on language modeling"; expected "COML 2025". Wrong conference acronym/year. |
-| excel-data-transformation | Data shape mismatch: agent (180, 6), expected (198, 6). 18 rows missing - likely filtered/dropped extra data during the transformation. |
-| excel-market-research | Cell value mismatch: ACE row 3 has 3.6 vs expected 3.7. Numeric error. |
-| gdp-cr5-analysis | South Asia top-5 country match 80% (missed one country: Pakistan presumably - matched only Bangladesh, SriLanka, Nepal, India). CR5 differences exceed tolerance for East Asia & Pacific (2.30), Latin America (4.52), Middle East/N. Africa (-5.20). 4 problems found, score 80/100. |
-| git-repo | "URL field not found in agent's result.json". Agent's result file is missing the required `URL` field. |
-| huggingface-upload | README.md content differs from groundtruth (the rest of the files - config.json, pytorch_model.bin, figures - matched). Wrong README content uploaded. |
-| identify-all-songs | Missed 18 of the ground-truth songs (sweetbutpsycho, abcdefu, atmyworst, hymnfortheweekend, thatswhatilike, cupid, unhealthy, nothingonyou, talkingtothemoon, imamess, inferno, friends, ride, flymetothemoon, symphony, letitbeme, stressedout, prayerinc). Severely incomplete identification. |
-| imagenet | local check failed with `None` - output file wrong format / missing entirely. |
-| logical-datasets-collection | "Table content or format does not match" - structural mismatch in the collected table. |
-| machine-operating | Precision 0% / Recall 0% / F1 0%. Agent produced anomaly records with timestamps that don't match ground-truth timestamps at all (totally wrong rows produced; 327 ground-truth records missed). Approach to anomaly detection failed completely. |
-| meeting-assign | Agent recommended "Tuesday 9:00 AM to 11:00 AM" - the wrong meeting slot for the team availability. Email content scheduled wrong time. |
-| merge-hf-datasets | "Conversation id xlam_0 not matched: tool_calls count mismatch - 2 vs 1". The agent's merged dataset has only 1 tool_call where groundtruth expects 2. Structural integrity of the merged dataset is wrong. |
-| mrbeast-analysis | Sheet shape mismatch: Detail_Lists agent (27, 7) vs groundtruth (32, 7). Missing 5 video rows. |
-| nvidia-stock-analysis | NaN mismatch for 2024Q3 Outstanding Shares: expected 24221M, found NaN. Agent did not fetch quarterly outstanding-share counts properly. |
-| ppt-analysis | "Missing required code snippets: Java package classes". The PPT must include code snippets for Java package classes (lookup, insert, hash function), but the agent only included Tiger function / hash table snippets, not the Java package class snippets. |
-| price-comparison | BigQuery schema wrong: agent created columns `Product_Name`, `Our_Price`, `Competitor_Price`, `Price_Difference` (with underscores) but groundtruth requires `Product Name`, `Our Price`, `Competitor Price`, `Price Difference` (with spaces). Eval query fails: "Unrecognized name: `Product Name`". |
-| reimbursement-form-filler | Type mismatch in Month column rows 4-6: agent stored `datetime.datetime` objects; groundtruth has `str`. Agent didn't format dates as strings. |
-| search-ca-school | "The number of universities in the needed info and groundtruth info is not the same" - wrong row count in collected school list. |
-| set-conf-cr-ddl | Failure log truncated; only 1 user-input turn and 6 tool calls before stopping. The agent searched calendar events for 2025-09-26 and stopped without setting any conference review deadlines. Most likely the agent ended early without completing the calendar updates. |
-| shopping-helper | 0/3 products passed all validation. Multiple issues per product: invalid price format, price/title not found in DOM, "sofa/couch" / color / material keywords not found in page content. Agent fabricated or used a wrong shopping page. |
-| sla-timeout-monitor | Found unexpected apology email for `anthonyw@mcp.com` who should NOT have received one. False-positive recipient: agent over-included one customer in the apology mail-out. |
-| stock-build-position | Stock code mismatch: Meituan expected `3690.HK`, actual `nan`. Agent failed to look up Meituan's HK ticker. |
-| student-interview | "Found 0 total events" - calendar pre-existing events were also missing, so the agent appears to never have created the interview events (or created them in a different calendar). |
-| subway-planning | "Line count mismatch: groundtruth has 25 lines, agent has 10". Output incomplete - only 10 of 25 stations/route legs produced. |
-| travel-exchange | Multiple FAIL on Diana_Expenses, Elena_Expenses, Frank_Expenses, Grace_Expenses, Total_Cost (out of tolerance), and SGD_to_CNY rate not extractable. Currency conversions wrong / missing for SGD. |
-| trip-adviser | "The recommended exit for Kamakura Station must be the 'West Exit'." Agent recommended a different exit (likely East). Single-fact error. |
-| trip-itinerary-generator | Crashed at the first attraction: "process Eiffel Tower failed: Expecting value: line 1 column 1 (char 0)" - the agent's output JSON is empty/invalid for attractions. |
-| update-material-inventory | Both Sheets integration check (0.00) and WooCommerce sync check (0.00) failed - neither half of the dual-system update was performed correctly. |
-| upenn-campus-route | "JSON decode error: Expecting value: line 1 column 1 (char 0)" - route plan JSON file is empty/invalid; failed at the first leg "Penn Bookstore -> School of Engineering". |
-| wandb-shortest-length | CSV shape mismatch: agent (6, 4), groundtruth (5, 4). Agent included one extra row beyond the required shortest-length set. |
-| woocommerce-new-product | Discount emails 39/40 (need 40, i.e. 100%). One customer not emailed. Appointment emails 0/0 OK. |
-| woocommerce-new-welcome | "BigQuery Customer Updates: Customer update issues: 10 problems found" - 10 customers (e.g. michael.chen@kkf.com, emily.davis@kkf.com, ...) "not found in database" because the agent did not properly insert/upsert the new welcome-list customer rows into BigQuery. |
-| woocommerce-stock-alert | Sheets update wrong: stock quantity mismatch for DELL-XPS-13 (expected 5, got 12). Agent updated Google Sheet with stale/wrong stock numbers; emails were sent correctly. |
-| woocommerce-update-cover | 1/3 product covers correct (33.3%, need >= 80%). Rainbow Sneakers got image 15 instead of 11; Fashion Backpack got 11 instead of 13. Agent assigned wrong featured image IDs. |
-| youtube-repo | Only 3/7 expected GitHub repos in the output md. Missing: srush/awesome-o1, Dao-AILab/flash-attention, All-Hands-AI/OpenHands, anthropics/claude-code. Agent didn't extract all referenced repos from the YouTube content. |
+| canvas-homework-grader-python | Agent incorrectly graded Donald Richardson's submission as 10/10 points. The submission had a runtime_error (index out of bounds) and should have received 0 points. 5/6 students were graded correctly (83.3% accuracy), but the one error caused evaluation failure. |
+| hk-top-conf | Agent produced completely wrong numbers. It reported CUHK as top with 29 total papers (18 poster, 8 spotlight, 3 oral), but the groundtruth shows HKUST as top with 124 total papers (113 poster, 9 spotlight, 2 oral). The agent likely searched the wrong conference or used incorrect data sources. |
+| investment-decision-analysis | Evaluation script crashed with a ValueError: 'could not convert string to float: year'. The agent wrote a header row ('year') into a data cell of the Google Sheet, causing the evaluator to fail when trying to parse numeric values. The agent's sheet structure was malformed. |
+| live-transactions | Agent's investigation report JSON was missing the top-level key `related_transactions`. All other 8 keys were present and correct, but this one required field was absent from the uploaded file. |
+| music-analysis | Agent only created sheets for years 1940–1945 (6 sheets), but the groundtruth requires sheets for 1940–1949 (10 sheets). The agent stopped processing data 4 years short of the required range. |
+| apply-phd-email | Two issues: (1) The agent used 'Recommendation_Letter_Lily-1.pdf' but the groundtruth expects 'Recommendation_Letter_Lily-2.pdf' — wrong version of the recommendation letter. (2) The content of 'All_Awards_Certificates.pdf' differed from the reference, suggesting the agent merged/combined the wrong award files. |
+| arrange-workspace | Agent organized files into a subdirectory 'initial_workspace_arrange/' instead of placing them directly in the workspace root. All files and folder structure were correct but nested one level too deep, causing every path to mismatch the expected groundtruth structure. |
+| canvas-arrange-exam | Multiple errors: (1) Agent included ENG101 and CS101 in the schedule even though the student's entrance exam score ≥95 exempts them. (2) DB101 exam type was left as 'tbd' instead of 'closedbook'. (3) CS301 proctor name was 'smithblacksmithmcpcom' instead of 'smith'. (4) NET101 had multiple fields wrong. Match rate was only 54.5%. |
+| canvas-art-manager | Agent failed to create 8 out of 27 courses: American Literature-7, Medieval History-7, Cognitive Psychology-7, Operations Management-7, Business Law-7, Screenwriting-7, International Marketing-7, and Business Strategy-7. These courses were not found by the respective instructors, likely created under wrong instructor accounts or with incorrect names. |
+| canvas-do-quiz | Agent failed to achieve a full score on the PHIL201-2 quiz (scored 160/180). All 13 other quizzes were completed with full scores, but this one quiz was answered incorrectly, causing the evaluation to fail (required 14/14 full scores). |
+| canvas-list-test | Row count mismatches in both output files: quiz_info.csv had only 3 rows but groundtruth expects 13; assignment_info.csv had 14 rows but groundtruth expects 4. The agent likely applied wrong filters when querying Canvas — possibly listing from the wrong course or including/excluding wrong items. |
+| canvas-new-students-notification | Agent sent the assignment policy notification to all 19 students (both new and existing), but should have only messaged the 14 new students. All 5 existing/pre-enrolled students incorrectly received the message. The agent did not distinguish between pre-existing and newly enrolled students. |
+| canvas-submit-late-work | Agent did not send the required email with the 'Leave Application.pdf' attachment. The evaluation aborted immediately because this prerequisite email was not found in the mailbox. |
+| cooking-guidance | Agent's shopping list was incomplete — missing 7 required ingredients (豆瓣酱, 生抽, 盐, 生抽酱油, 食用盐, 胡椒粉, 红油豆瓣), achieving only 75% shopping coverage against the required 90% threshold. The agent likely failed to aggregate all condiments and seasonings needed across the three recommended dishes. |
+| course-assistant | Agent failed to send the emergency notification email to student Michelle Brooks (michelle_brooks26@mcp.com). Two other target students (Steven Morgan and Carolyn Alvarez) received the email correctly, but the third was missed. |
+| course-schedule | Agent wrote exam schedule data using filesystem-write_file calls that overwrote the same file twice, resulting in only the last entry being saved. The final file contained only one record instead of all required entries. |
+| courses-ta-hws | Agent only produced 18 C files in the os_hw3/ directory, but the groundtruth expects exactly 33 C files. The agent correctly identified and renamed some submissions but missed 15 students who submitted .c files, likely due to incomplete traversal of the source files. |
+| dataset-license-issue | Agent spent 66 LLM requests and 65 tool calls but never closed the GitHub issue. The agent likely got stuck investigating the issue without completing the final step of closing it. |
+| detect-revised-terms | Agent produced 17 rows in revised_terms.csv but the groundtruth only has 5 rows. The agent over-identified conflicting clauses — it found all clauses that reference old laws rather than only the specific 5 clauses that actually conflict with the new 民法典. |
+| dietary-health | Agent calculated incorrect nutritional values: output showed 97.5g where 78.0g was expected, and 142.56g where 150.8g (within 5%) was required. The agent likely used wrong portion sizes or incorrect nutritional data when computing the dietary plan. |
+| email-paper-homepage | Agent updated the paper venue to 'accepted at colm 2026 - conference on language modeling' but the groundtruth expects 'COML 2025'. The agent read the email acceptance notification and used the year from the email (2026) rather than the correct venue abbreviation and year (COML 2025). |
+| excel-data-transformation | Agent produced 180 rows (60 months × 3 appliance types, covering March 2019–December 2024) but the groundtruth expects 198 rows. The agent missed 18 rows — likely data from an earlier date range or additional appliance categories. |
+| excel-market-research | Single value mismatch: ACE segment in row 3 (year 2017) was calculated as 3.6% but the groundtruth expects 3.7%. A minor rounding or data-reading error in one cell caused the entire evaluation to fail. |
+| gdp-cr5-analysis | Four errors: (1) South Asia top-5 countries: agent included Maldives instead of Pakistan (80% match). (2) East Asia & Pacific CR5 value off by 2.30. (3) Latin America & Caribbean CR5 off by 4.52. (4) Middle East & North Africa CR5 off by 5.20. The agent likely used wrong year data or incorrect GDP aggregation for these regions. |
+| git-repo | Agent's result.json was missing the required 'URL' field. The agent found and described the top implementation repository but did not include the repository URL as a top-level key in the JSON output. |
+| huggingface-upload | Agent uploaded all binary files correctly (config.json, pytorch_model.bin, all figures) but the README.md content differed from the groundtruth. The agent likely wrote incorrect or incomplete content to the README instead of using the exact required content. |
+| identify-all-songs | Agent found a different YouTube playlist (17 songs from a 'Top hits 2024' video) instead of the correct target playlist. The groundtruth expects 18 specific classic/older hit songs. The agent searched for the wrong video. |
+| imagenet | Evaluation failed with 'local check failed: None'. The agent created a survey.tex LaTeX table with only 2 models (DiT-XL/2-G and LlamaGen-3B), but the groundtruth likely requires more models or different formatting. |
+| inter-final-performance-analysis | Agent created the Google Sheet but left the worksheet with the default name '工作表1' instead of creating the required named worksheets '2023Final', '2025Final', and 'StatsDifference'. The evaluator could not find any of the expected worksheet names. |
+| interview-report | Agent's docx was 98.2% similar to groundtruth but missing a section: the diff shows 'evaluation', 'conclusion', 'overall assessment', and 'recommendation' sections were deleted. The agent produced the report but omitted these required closing sections. |
+| inventory-sync | Agent only synced the West region correctly (88% accuracy) but completely failed East and South regions (0% accuracy each). The WooCommerce inventory for East and South products shows values from the wrong region — the agent mapped product IDs to the wrong WooCommerce store entries. |
+| invoice-org | Agent used incorrect exchange rates and dates for several invoices: wrong exchange rates for 3 invoices (used approximate/rounded values instead of exact historical rates), and wrong dates for 2 flight invoices. The agent likely used current exchange rates instead of the historical rates on the invoice dates. |
+| landing-task-reminder | Overdue reminder emails included deadline dates in the body (e.g., 'company culture deadline 20260330'), but the expected format lists only task names without deadlines. Email content mismatch for all 4 overdue employees and their CC'd managers. |
+| language-school | Agent returned 10 universities instead of the expected 5. |
+| llm-training-dataset | Missing 1 LLaMA dataset (arxiv), GPT-Neo dataset list invalid (must be only 'The Pile' OR 'The Pile' + all 22 sub-datasets), multiple size value errors (Common Crawl, The Pile, C4, OpenWebText, StackExchange), and data not sorted in descending order by size. |
+| logical-datasets-collection | Table content or format does not match the groundtruth. |
+| machine-operating | Agent reported anomalies with rounded minute-level timestamps (e.g., 11:30:00) while the groundtruth uses sub-second precision timestamps (e.g., 11:33:59.878906). Zero matching records between agent output (232 records) and groundtruth (337 records), resulting in 0% precision and recall. |
+| meeting-assign | The meeting time in the email ('Tuesday 9:00 AM to 11:00 AM every week') did not match the required format expected by the evaluator. |
+| merge-hf-datasets | Conversation id xlam_0 not matched: tool_calls count mismatch — 2 vs 1. The agent's merged dataset has only 1 tool_call where groundtruth expects 2. Structural integrity of the merged dataset is wrong. |
+| mrbeast-analysis | Agent's Detail_Lists sheet contains 27 rows but groundtruth expects 32 rows — missing 5 records. |
+| nvidia-stock-analysis | Agent filled in a value (24221) for 2024Q3 Outstanding Shares, but the expected value is NaN — the agent incorrectly populated a cell that should have been left empty. |
+| ppt-analysis | Missing required Java package class code snippet in the output. The evaluator expected a specific code snippet for Java package classes which was not present. |
+| price-comparison | BigQuery table was created with underscore column names (Product_Name, Our_Price, etc.) instead of spaced names (Product Name, Our Price, etc.), causing schema mismatch and query failure during evaluation. |
+| reimbursement-form-filler | Date values in the 'Month' column were stored as datetime objects instead of strings, causing type mismatch errors in 3 rows during evaluation. |
+| search-ca-school | Agent returned a different number of universities than expected (count mismatch between agent output and groundtruth). |
+| set-conf-cr-ddl | The evaluator's Google Calendar MCP returned an empty response (JSON decode error) when querying for calendar events, indicating the agent failed to create the required calendar events. |
+| shopping-helper | Amazon product URLs were inaccessible during evaluation (connection refused), so neither product prices, titles, nor required keywords (sofa/couch, black, faux leather) could be verified from the DOM. All 3 products failed validation. |
+| sla-timeout-monitor | Agent sent an unexpected apology email to anthonyw@mcp.com who should NOT have received one — a false positive email was triggered for a non-qualifying ticket. |
+| stock-build-position | Meituan's stock code was NaN instead of the expected '3690.HK' in the output spreadsheet — agent failed to look up or record the correct Hong Kong stock ticker. |
+| student-interview | Google Calendar had 0 events during evaluation — the agent failed to create any interview scheduling events on the calendar. |
+| subway-planning | Output file has only 10 lines while groundtruth expects 25 lines — the agent produced an incomplete subway plan. |
+| travel-exchange | SGD_to_CNY conversion rate was missing (None value), and multiple expense calculations were significantly wrong (Diana, Elena, Frank, Grace), leading to a large total cost error. |
+| trip-adviser | Agent recommended the wrong exit for Kamakura Station — the required exit is 'West Exit' but the agent gave a different one. |
+| trip-itinerary-generator | Evaluation crashed with a JSON decode error when Google Maps MCP returned an empty response during the attractions info lookup step, making it impossible to validate the submitted itinerary. |
+| update-material-inventory | Both Google Sheets integration and WooCommerce sync checks scored 0.00 — the agent completed tool calls but the inventory data was not actually updated in either system. |
+| upenn-campus-route | Evaluation crashed with a JSON decode error when Google Maps MCP returned empty response while building the UPenn campus distance matrix, making route validation impossible. |
+| wandb-shortest-length | Output CSV has 6 rows instead of the expected 5 rows — agent included an extra row in the results. |
+| woocommerce-new-product | Only 39 out of 40 required discount emails were sent — agent missed sending to one customer. |
+| woocommerce-new-welcome | 10 first-time customers were not inserted into BigQuery — the agent sent welcome emails but failed to write the new customer records to the database. |
+| woocommerce-stock-alert | Stock quantity for DELL-XPS-13 in Google Sheets was set to 12 instead of the expected 5 — incorrect quantity written during inventory update. |
+| woocommerce-update-cover | Featured images were assigned to the wrong products — Rainbow Sneakers got image ID 15 (expected 11) and Fashion Backpack got image ID 11 (expected 13), indicating the image-to-product mapping was swapped. |
+| youtube-repo | Only 3 out of 7 required GitHub repository URLs were found in the output markdown file. Missing: github.com/srush/awesome-o1, github.com/Dao-AILab/flash-attention, github.com/All-Hands-AI/OpenHands, github.com/anthropics/claude-code. |
 
 ## Cross-cutting Observations
 
-- **Loop / repetition** dominates the `exceed_max_turns` bucket. In yahoo-analysis the model called the exact same tool with the exact same arguments 20 times for three different tools - a tight stuck loop. Several tasks (academic-warning, ab-testing, sync-todo-to-readme) repeat the same call 6-10 times before changing strategy.
-- **fail_at_invalid_tool_call_str** (18 tasks, 20.5%) is the largest non-evaluation failure category and indicates a serialization-level problem with the model's tool-call output (not a reasoning issue). This suggests fixing the model's tool-call formatting could recover ~20% of failures cheaply.
-- **Off-by-one / partial completion** is a major theme in did_not_pass_evaluation: subway-planning (10/25), music-analysis (6/10 years), courses-ta-hws (18/33), canvas-list-test (3/13 quizzes), youtube-repo (3/7 repos), woocommerce-new-product (39/40 emails), canvas-do-quiz (13/14). The agent stops short of full coverage even when the format is correct.
-- **Format / type mismatch** failures often have correct content: price-comparison (column names with `_` vs space), reimbursement-form-filler (datetime vs str), hk-top-conf (numbers off but rows correct). These are recoverable with stricter formatting checks.
+- **Malformed tool calls** (18 tasks, 18.9%) is the largest non-evaluation failure category. The dominant pattern is missing closing brackets/braces — a systematic model-level serialization issue. Fixing the model's tool-call output format could recover ~19% of failures.
+- **Loop / repetition** dominates the `exceed_max_turns` bucket. In yahoo-analysis the model called the exact same tool with the exact same arguments 20 times for three different tools — a tight stuck loop. Several tasks (academic-warning, ab-testing, k8s-safety-audit) repeat the same call 30–90 times before changing strategy.
+- **Off-by-one / partial completion** is a major theme in did_not_pass_evaluation: subway-planning (10/25 lines), music-analysis (6/10 years), courses-ta-hws (18/33 files), canvas-list-test (3/13 quizzes), youtube-repo (3/7 repos), woocommerce-new-product (39/40 emails), canvas-do-quiz (13/14 quizzes). The agent stops short of full coverage even when the format is correct.
+- **Format / type mismatch** failures often have correct content: price-comparison (column names with `_` vs space), reimbursement-form-filler (datetime vs str), inter-final-performance-analysis (wrong worksheet names). These are recoverable with stricter output formatting.
 - **Wrong inclusion criteria**: canvas-new-students-notification (5 false-positive recipients), sla-timeout-monitor (1 false-positive recipient), detect-revised-terms (17 vs 5 rows), canvas-arrange-exam (included CS101/ENG101 that should have been excluded). The model tends to over-include when filtering rules are nuanced.
